@@ -260,12 +260,12 @@ class SlackTaskTracker:
         return [
             {
                 "type": "section",
-                "block_id": f"task-{task.id}",
+                "block_id": f"task-{task.id}-details",
                 "text": {"type": "mrkdwn", "text": "\n".join(description_lines)},
             },
             {
                 "type": "actions",
-                "block_id": f"task-{task.id}",
+                "block_id": f"task-{task.id}-actions",
                 "elements": [
                     {
                         "type": "checkboxes",
