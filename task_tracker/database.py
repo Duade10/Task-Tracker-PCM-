@@ -86,7 +86,10 @@ class TaskRepository:
                 (description, developer_id, project_manager_id, created_at, channel_id),
             )
             task_id = cursor.lastrowid
-            return self.get_task(task_id)
+            row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if row is None:
+            raise RuntimeError("Failed to retrieve newly created task")
+        return self._row_to_task(row)
 
     def update_message_reference(self, task_id: int, channel_id: str, message_ts: str) -> None:
         with self._connect() as conn:
