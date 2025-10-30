@@ -42,12 +42,21 @@ class SlackTaskTracker:
 
             text = event.get("text", "")
             author_id = event.get("user")
-            developer_id, description = self._parse_task_request(text)
+            developer_id, project_manager_id, description = self._parse_task_request(text)
             if developer_id is None:
                 say(
                     text=(
                         "Please mention a developer when creating a task, "
-                        "e.g. `@bot @developer Implement feature`."
+                        "e.g. `@bot @developer @pm Implement feature`."
+                    ),
+                    channel=channel,
+                )
+                return
+            if project_manager_id is None:
+                say(
+                    text=(
+                        "Please mention a project manager when creating a task, "
+                        "e.g. `@bot @developer @pm Implement feature`."
                     ),
                     channel=channel,
                 )
@@ -55,8 +64,21 @@ class SlackTaskTracker:
             if author_id is None:
                 say(text="Unable to determine who created the task.", channel=channel)
                 return
+            if author_id == project_manager_id:
+                say(
+                    text=(
+                        "Please mention a project manager who is different from the task creator."
+                    ),
+                    channel=channel,
+                )
+                return
 
-            task = self.repo.create_task(description, developer_id, author_id, self.tasks_channel)
+            task = self.repo.create_task(
+                description,
+                developer_id,
+                project_manager_id,
+                self.tasks_channel,
+            )
             response = self._post_task_message(client, task)
             if response:
                 self.repo.update_message_reference(task.id, response["channel"], response["ts"])
@@ -162,19 +184,23 @@ class SlackTaskTracker:
         except SlackApiError:
             pass
 
-    def _parse_task_request(self, text: str) -> tuple[str | None, str]:
+    def _parse_task_request(
+        self, text: str
+    ) -> tuple[str | None, str | None, str]:
         mention_ids = BOT_MENTION_PATTERN.findall(text)
         description = BOT_MENTION_PATTERN.sub("", text).strip()
-        developer_id: str | None = None
-        if self.bot_user_id and mention_ids:
-            for user_id in mention_ids:
-                if user_id != self.bot_user_id:
-                    developer_id = user_id
-                    break
-        elif mention_ids:
-            developer_id = mention_ids[0]
-        description = description.strip()
-        return developer_id, description or "(no description provided)"
+
+        filtered_mentions: list[str] = []
+        for user_id in mention_ids:
+            if user_id == self.bot_user_id:
+                continue
+            if user_id not in filtered_mentions:
+                filtered_mentions.append(user_id)
+
+        developer_id = filtered_mentions[0] if filtered_mentions else None
+        project_manager_id = filtered_mentions[1] if len(filtered_mentions) > 1 else None
+
+        return developer_id, project_manager_id, description or "(no description provided)"
 
     def _task_summary_block(self, task: Task) -> dict:
         status = "Completed" if task.completed_at else "Pending"
