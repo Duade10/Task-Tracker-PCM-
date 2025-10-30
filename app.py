@@ -240,12 +240,6 @@ class SlackTaskTracker:
                 "value": f"{task.id}|pm",
             },
         ]
-        initial_options: list[dict] = []
-        if task.developer_checked:
-            initial_options.append(checkbox_options[0])
-        if task.project_manager_checked:
-            initial_options.append(checkbox_options[1])
-
         description_lines = [
             f"*Task #{task.id}*",
             task.description,
@@ -257,19 +251,20 @@ class SlackTaskTracker:
         if task.completed_at:
             description_lines.append(f"*Completed:* {self._format_timestamp(task.completed_at)}")
 
-        actions_block = {
-            "type": "actions",
-            "block_id": f"task-{task.id}-actions",
-            "elements": [
-                {
-                    "type": "checkboxes",
-                    "action_id": f"task_checkboxes_{task.id}",
-                    "options": checkbox_options,
-                }
-            ],
+        checkboxes_element = {
+            "type": "checkboxes",
+            "action_id": f"task_checkboxes_{task.id}",
+            "options": checkbox_options,
         }
+
+        initial_options: list[dict] = []
+        if task.developer_checked:
+            initial_options.append(checkbox_options[0])
+        if task.project_manager_checked:
+            initial_options.append(checkbox_options[1])
+
         if initial_options:
-            actions_block["elements"][0]["initial_options"] = initial_options
+            checkboxes_element["initial_options"] = initial_options
 
         return [
             {
@@ -277,7 +272,11 @@ class SlackTaskTracker:
                 "block_id": f"task-{task.id}-details",
                 "text": {"type": "mrkdwn", "text": "\n".join(description_lines)},
             },
-            actions_block,
+            {
+                "type": "actions",
+                "block_id": f"task-{task.id}-actions",
+                "elements": [checkboxes_element],
+            },
         ]
 
     def _post_task_message(self, client: WebClient, task: Task) -> dict | None:
