@@ -257,24 +257,27 @@ class SlackTaskTracker:
         if task.completed_at:
             description_lines.append(f"*Completed:* {self._format_timestamp(task.completed_at)}")
 
+        actions_block = {
+            "type": "actions",
+            "block_id": f"task-{task.id}-actions",
+            "elements": [
+                {
+                    "type": "checkboxes",
+                    "action_id": f"task_checkboxes_{task.id}",
+                    "options": checkbox_options,
+                }
+            ],
+        }
+        if initial_options:
+            actions_block["elements"][0]["initial_options"] = initial_options
+
         return [
             {
                 "type": "section",
                 "block_id": f"task-{task.id}-details",
                 "text": {"type": "mrkdwn", "text": "\n".join(description_lines)},
             },
-            {
-                "type": "actions",
-                "block_id": f"task-{task.id}-actions",
-                "elements": [
-                    {
-                        "type": "checkboxes",
-                        "action_id": f"task_checkboxes_{task.id}",
-                        "options": checkbox_options,
-                        "initial_options": initial_options,
-                    }
-                ],
-            },
+            actions_block,
         ]
 
     def _post_task_message(self, client: WebClient, task: Task) -> dict | None:
