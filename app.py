@@ -95,7 +95,13 @@ class SlackTaskTracker:
             if not tasks:
                 respond("No tasks found.")
                 return
-            blocks = [self._task_summary_block(task) for task in tasks]
+
+            blocks: list[dict] = []
+            for index, task in enumerate(tasks):
+                blocks.extend(self._task_summary_blocks(task))
+                if index < len(tasks) - 1:
+                    blocks.append({"type": "divider"})
+
             respond(blocks=blocks)
 
         @self.app.action(CHECKBOX_ACTION_PATTERN)
@@ -187,24 +193,58 @@ class SlackTaskTracker:
 
         return developer_id, project_manager_id, description or "(no description provided)"
 
-    def _task_summary_block(self, task: Task) -> dict:
-        status = "Completed" if task.completed_at else "Pending"
-        completed_text = (
-            f"\n*Completed:* {self._format_timestamp(task.completed_at)}" if task.completed_at else ""
+    def _task_summary_blocks(self, task: Task) -> list[dict]:
+        status_label = ":white_check_mark: Completed" if task.completed_at else ":hourglass_flowing_sand: Pending"
+        developer_status = (
+            ":white_check_mark: Done" if task.developer_checked else ":hourglass_flowing_sand: Pending"
         )
-        return {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": (
-                    f"*Task #{task.id}* ({status})\n"
-                    f"*Developer:* <@{task.developer_id}>\n"
-                    f"*Project manager:* <@{task.project_manager_id}>\n"
-                    f"*Created:* {self._format_timestamp(task.created_at)}{completed_text}\n"
-                    f"{task.description}"
-                ),
+        project_manager_status = (
+            ":white_check_mark: Approved"
+            if task.project_manager_checked
+            else ":hourglass_flowing_sand: Awaiting review"
+        )
+
+        timeline_elements = [
+            {"type": "mrkdwn", "text": f":calendar: Created {self._format_timestamp(task.created_at)}"}
+        ]
+        if task.completed_at:
+            timeline_elements.append(
+                {
+                    "type": "mrkdwn",
+                    "text": f":checkered_flag: Completed {self._format_timestamp(task.completed_at)}",
+                }
+            )
+
+        blocks: list[dict] = [
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": f"Task #{task.id}", "emoji": True},
             },
-        }
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"{status_label}\n*{task.description}*",
+                },
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {"type": "mrkdwn", "text": f"*Developer*\n<@{task.developer_id}>"},
+                    {"type": "mrkdwn", "text": f"*Project manager*\n<@{task.project_manager_id}>"},
+                ],
+            },
+            {"type": "context", "elements": timeline_elements},
+            {
+                "type": "section",
+                "fields": [
+                    {"type": "mrkdwn", "text": f"*Developer status*\n{developer_status}"},
+                    {"type": "mrkdwn", "text": f"*PM status*\n{project_manager_status}"},
+                ],
+            },
+        ]
+
+        return blocks
 
     def _format_task_details(self, task: Task) -> str:
         lines = [
@@ -236,20 +276,13 @@ class SlackTaskTracker:
                 "value": f"{task.id}|developer",
             },
             {
-                "text": {"type": "mrkdwn", "text": f"Project manager approved (<@{task.project_manager_id}>)"},
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"Project manager approved (<@{task.project_manager_id}>)",
+                },
                 "value": f"{task.id}|pm",
             },
         ]
-        description_lines = [
-            f"*Task #{task.id}*",
-            task.description,
-            "",
-            f"*Developer:* <@{task.developer_id}>",
-            f"*Project manager:* <@{task.project_manager_id}>",
-            f"*Created:* {self._format_timestamp(task.created_at)}",
-        ]
-        if task.completed_at:
-            description_lines.append(f"*Completed:* {self._format_timestamp(task.completed_at)}")
 
         checkboxes_element = {
             "type": "checkboxes",
@@ -266,11 +299,11 @@ class SlackTaskTracker:
         if initial_options:
             checkboxes_element["initial_options"] = initial_options
 
-        return [
+        summary_blocks = self._task_summary_blocks(task)
+        extra_blocks = [
             {
-                "type": "section",
-                "block_id": f"task-{task.id}-details",
-                "text": {"type": "mrkdwn", "text": "\n".join(description_lines)},
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": ":white_check_mark: Completion checklist"}],
             },
             {
                 "type": "actions",
@@ -278,6 +311,8 @@ class SlackTaskTracker:
                 "elements": [checkboxes_element],
             },
         ]
+
+        return summary_blocks + extra_blocks
 
     def _post_task_message(self, client: WebClient, task: Task) -> dict | None:
         try:
