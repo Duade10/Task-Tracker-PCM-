@@ -52,25 +52,8 @@ class SlackTaskTracker:
                     channel=channel,
                 )
                 return
-            if project_manager_id is None:
-                say(
-                    text=(
-                        "Please mention a project manager when creating a task, "
-                        "e.g. `@bot @developer @pm Implement feature`."
-                    ),
-                    channel=channel,
-                )
-                return
             if author_id is None:
                 say(text="Unable to determine who created the task.", channel=channel)
-                return
-            if author_id == project_manager_id:
-                say(
-                    text=(
-                        "Please mention a project manager who is different from the task creator."
-                    ),
-                    channel=channel,
-                )
                 return
 
             task = self.repo.create_task(
@@ -190,15 +173,17 @@ class SlackTaskTracker:
         mention_ids = BOT_MENTION_PATTERN.findall(text)
         description = BOT_MENTION_PATTERN.sub("", text).strip()
 
-        filtered_mentions: list[str] = []
+        assignee_mentions: list[str] = []
         for user_id in mention_ids:
             if user_id == self.bot_user_id:
                 continue
-            if user_id not in filtered_mentions:
-                filtered_mentions.append(user_id)
+            assignee_mentions.append(user_id)
 
-        developer_id = filtered_mentions[0] if filtered_mentions else None
-        project_manager_id = filtered_mentions[1] if len(filtered_mentions) > 1 else None
+        developer_id = assignee_mentions[0] if assignee_mentions else None
+        if len(assignee_mentions) > 1:
+            project_manager_id = assignee_mentions[1]
+        else:
+            project_manager_id = developer_id
 
         return developer_id, project_manager_id, description or "(no description provided)"
 
