@@ -4,7 +4,7 @@ This project provides a Slack bot built with [Slack Bolt](https://slack.dev/bolt
 
 ## Features
 
-- Mention the bot together with a teammate (developer) to create a task from any channel.
+- Mention the bot together with a teammate (developer) **and** the project manager to create a task from any channel.
 - Automatically posts task details to a dedicated task channel with interactive checkboxes.
 - Separate completion checkboxes for the assigned developer and the project manager.
 - Automatic notifications when either party marks their checkbox and when the task is fully completed.
@@ -50,11 +50,11 @@ This project provides a Slack bot built with [Slack Bolt](https://slack.dev/bolt
    python app.py
    ```
 
-The bot listens for mentions and the `/tasks` slash command. When you tag the bot and include another user mention in your message (e.g., `@taskbot @alex Finish the API docs`), a new task is created and posted to the configured task channel.
+The bot listens for mentions and the `/tasks` slash command. When you tag the bot and include mentions for both the developer and the project manager in your message (e.g., `@taskbot @alex @casey Finish the API docs`), a new task is created and posted to the configured task channel.
 
 ## Usage
 
-- **Create a task:** mention the bot and the developer in a message. The creator of the message is treated as the project manager.
+- **Create a task:** mention the bot, the developer, and the project manager in a message (e.g., `@taskbot @alex @casey Finish the API docs`). The project manager must be different from the task creator.
 - **Mark developer completion:** the assigned developer clicks their checkbox in the task message. The bot announces their update in the task channel.
 - **Mark project manager approval:** the project manager checks their box to approve the task. The bot announces their approval and, if both boxes are checked, marks the task as completed.
 - **List tasks:** use `/tasks` to list all tasks, `/tasks completed` to show completed tasks, `/tasks pending` for outstanding tasks, or `/tasks show <id>` for detailed information about a specific task.
