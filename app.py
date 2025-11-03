@@ -71,6 +71,40 @@ class SlackTaskTracker:
         def handle_tasks_command(ack, respond, command):
             ack()
             text = (command.get("text") or "").strip()
+            if text.lower().startswith("delete"):
+                parts = text.split()
+                if len(parts) < 2 or not parts[1].isdigit():
+                    respond("Usage: /tasks delete <task_id>")
+                    return
+                task_id = int(parts[1])
+                try:
+                    task = self.repo.get_task(task_id)
+                except KeyError:
+                    respond(f"Task #{task_id} not found.")
+                    return
+
+                user_id = command.get("user_id")
+                if user_id not in {task.developer_id, task.project_manager_id}:
+                    respond(
+                        "Only the assigned developer or project manager can delete this task."
+                    )
+                    return
+
+                try:
+                    self.repo.delete_task(task_id)
+                except KeyError:
+                    respond(f"Task #{task_id} not found.")
+                    return
+
+                client = self.app.client
+                self._delete_task_message(client, task)
+                self._send_channel_notification(
+                    client,
+                    task.channel_id,
+                    f"Task #{task_id} was deleted by <@{user_id}>.",
+                )
+                respond(f"Task #{task_id} deleted.")
+                return
             if text.lower().startswith("show"):
                 parts = text.split()
                 if len(parts) < 2 or not parts[1].isdigit():
@@ -172,6 +206,14 @@ class SlackTaskTracker:
             client.chat_postMessage(channel=channel, text=text)
         except SlackApiError:
             pass
+
+    def _delete_task_message(self, client: WebClient, task: Task) -> None:
+        if not task.message_ts:
+            return
+        try:
+            client.chat_delete(channel=task.channel_id, ts=task.message_ts)
+        except SlackApiError as exc:
+            print(f"Failed to delete task message: {exc}")
 
     def _parse_task_request(
         self, text: str
