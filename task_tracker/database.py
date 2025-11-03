@@ -145,6 +145,12 @@ class TaskRepository:
             rows = conn.execute(query).fetchall()
         return [self._row_to_task(row) for row in rows]
 
+    def delete_task(self, task_id: int) -> None:
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+            if cursor.rowcount == 0:
+                raise KeyError(f"Task {task_id} not found")
+
     def _row_to_task(self, row: sqlite3.Row) -> Task:
         return Task(
             id=row["id"],
