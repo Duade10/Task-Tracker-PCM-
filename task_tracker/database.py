@@ -18,6 +18,7 @@ def _utcnow() -> str:
 @dataclass
 class Task:
     id: int
+    title: str
     description: str
     developer_id: str
     project_manager_id: str
@@ -51,6 +52,7 @@ class TaskRepository:
                 """
                 CREATE TABLE IF NOT EXISTS tasks (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
                     description TEXT NOT NULL,
                     developer_id TEXT NOT NULL,
                     project_manager_id TEXT NOT NULL,
@@ -64,8 +66,18 @@ class TaskRepository:
                 """
             )
 
+            columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()
+            }
+            if "title" not in columns:
+                conn.execute("ALTER TABLE tasks ADD COLUMN title TEXT")
+                conn.execute(
+                    "UPDATE tasks SET title = description WHERE title IS NULL OR title = ''"
+                )
+
     def create_task(
         self,
+        title: str,
         description: str,
         developer_id: str,
         project_manager_id: str,
@@ -76,14 +88,22 @@ class TaskRepository:
             cursor = conn.execute(
                 """
                 INSERT INTO tasks (
+                    title,
                     description,
                     developer_id,
                     project_manager_id,
                     created_at,
                     channel_id
-                ) VALUES (?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (description, developer_id, project_manager_id, created_at, channel_id),
+                (
+                    title,
+                    description,
+                    developer_id,
+                    project_manager_id,
+                    created_at,
+                    channel_id,
+                ),
             )
             task_id = cursor.lastrowid
             row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
@@ -154,6 +174,7 @@ class TaskRepository:
     def _row_to_task(self, row: sqlite3.Row) -> Task:
         return Task(
             id=row["id"],
+            title=row["title"] if "title" in row.keys() else row["description"],
             description=row["description"],
             developer_id=row["developer_id"],
             project_manager_id=row["project_manager_id"],
