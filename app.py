@@ -42,7 +42,7 @@ class SlackTaskTracker:
 
             text = event.get("text", "")
             author_id = event.get("user")
-            developer_id, project_manager_id, description = self._parse_task_request(text)
+            developer_id, project_manager_id, summary = self._parse_task_request(text)
             if developer_id is None:
                 say(
                     text=(
@@ -56,8 +56,10 @@ class SlackTaskTracker:
                 say(text="Unable to determine who created the task.", channel=channel)
                 return
 
+            title = summary or "New task"
             task = self.repo.create_task(
-                description,
+                title,
+                "",
                 developer_id,
                 project_manager_id,
                 self.tasks_channel,
@@ -137,6 +139,50 @@ class SlackTaskTracker:
                     blocks.append({"type": "divider"})
 
             respond(blocks=blocks)
+
+        @self.app.shortcut("create_task_global")
+        def handle_global_shortcut(ack, body, client):
+            ack()
+            trigger_id = body.get("trigger_id")
+            if not trigger_id:
+                return
+            try:
+                client.views_open(trigger_id=trigger_id, view=self._build_create_task_modal())
+            except SlackApiError as exc:
+                print(f"Failed to open create task modal: {exc}")
+
+        @self.app.view("create_task_modal")
+        def handle_modal_submission(ack, body, client, view):
+            ack()
+            state_values = view.get("state", {}).get("values", {})
+
+            developer_id = self._selected_user_from_state(
+                state_values, "developer_block", "developer_select"
+            )
+            project_manager_id = self._selected_user_from_state(
+                state_values, "pm_block", "pm_select"
+            )
+            if not developer_id:
+                return
+            if not project_manager_id:
+                project_manager_id = developer_id
+
+            title = self._text_input_value(state_values, "title_block", "title_input") or "New task"
+            description = self._text_input_value(
+                state_values, "description_block", "description_input"
+            ) or ""
+
+            task = self.repo.create_task(
+                title.strip(),
+                description.strip(),
+                developer_id,
+                project_manager_id,
+                self.tasks_channel,
+            )
+            response = self._post_task_message(client, task)
+            if response:
+                self.repo.update_message_reference(task.id, response["channel"], response["ts"])
+            self._notify_task_creator(client, body.get("user", {}).get("id"), task)
 
         @self.app.action(CHECKBOX_ACTION_PATTERN)
         def handle_checkbox_action(ack, body, client):
@@ -233,7 +279,91 @@ class SlackTaskTracker:
         else:
             project_manager_id = developer_id
 
-        return developer_id, project_manager_id, description or "(no description provided)"
+        return developer_id, project_manager_id, description
+
+    def _build_create_task_modal(self) -> dict:
+        return {
+            "type": "modal",
+            "callback_id": "create_task_modal",
+            "title": {"type": "plain_text", "text": "Create Task"},
+            "submit": {"type": "plain_text", "text": "Create"},
+            "close": {"type": "plain_text", "text": "Cancel"},
+            "blocks": [
+                {
+                    "type": "input",
+                    "block_id": "developer_block",
+                    "label": {"type": "plain_text", "text": "Developer"},
+                    "element": {
+                        "type": "users_select",
+                        "action_id": "developer_select",
+                        "placeholder": {"type": "plain_text", "text": "Select a developer"},
+                    },
+                },
+                {
+                    "type": "input",
+                    "block_id": "pm_block",
+                    "label": {"type": "plain_text", "text": "Project manager"},
+                    "element": {
+                        "type": "users_select",
+                        "action_id": "pm_select",
+                        "placeholder": {"type": "plain_text", "text": "Select a project manager"},
+                    },
+                },
+                {
+                    "type": "input",
+                    "block_id": "title_block",
+                    "label": {"type": "plain_text", "text": "Task title"},
+                    "element": {
+                        "type": "plain_text_input",
+                        "action_id": "title_input",
+                        "placeholder": {"type": "plain_text", "text": "Enter a short title"},
+                    },
+                },
+                {
+                    "type": "input",
+                    "block_id": "description_block",
+                    "optional": True,
+                    "label": {"type": "plain_text", "text": "Description"},
+                    "element": {
+                        "type": "plain_text_input",
+                        "multiline": True,
+                        "action_id": "description_input",
+                        "placeholder": {
+                            "type": "plain_text",
+                            "text": "Provide additional details (optional)",
+                        },
+                    },
+                },
+            ],
+        }
+
+    def _selected_user_from_state(self, values: dict, block_id: str, action_id: str) -> str | None:
+        block = values.get(block_id, {})
+        element = block.get(action_id, {})
+        return element.get("selected_user")
+
+    def _text_input_value(self, values: dict, block_id: str, action_id: str) -> str | None:
+        block = values.get(block_id, {})
+        element = block.get(action_id, {})
+        value = element.get("value")
+        if isinstance(value, str):
+            return value
+        return None
+
+    def _notify_task_creator(self, client: WebClient, user_id: str | None, task: Task) -> None:
+        if not user_id:
+            return
+        try:
+            dm_response = client.conversations_open(users=user_id)
+            channel_id = dm_response.get("channel", {}).get("id")
+            if not channel_id:
+                return
+            client.chat_postMessage(
+                channel=channel_id,
+                text=f"Task #{task.id} created in <#{task.channel_id}>.",
+            )
+        except SlackApiError:
+            pass
 
     def _task_summary_blocks(self, task: Task) -> list[dict]:
         status_label = ":white_check_mark: Completed" if task.completed_at else ":hourglass_flowing_sand: Pending"
@@ -257,6 +387,16 @@ class SlackTaskTracker:
                 }
             )
 
+        description_text = None
+        if task.description and task.description.strip():
+            desc = task.description.strip()
+            if desc != task.title.strip():
+                description_text = desc
+
+        summary_text = f"{status_label}\n*{task.title}*"
+        if description_text:
+            summary_text = f"{summary_text}\n{description_text}"
+
         blocks: list[dict] = [
             {
                 "type": "header",
@@ -264,10 +404,7 @@ class SlackTaskTracker:
             },
             {
                 "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": f"{status_label}\n*{task.description}*",
-                },
+                "text": {"type": "mrkdwn", "text": summary_text},
             },
             {
                 "type": "section",
@@ -299,7 +436,10 @@ class SlackTaskTracker:
         if task.completed_at:
             lines.append(f"Completed: {self._format_timestamp(task.completed_at)}")
         lines.append("")
-        lines.append(task.description)
+        lines.append(task.title)
+        if task.description and task.description.strip() and task.description.strip() != task.title.strip():
+            lines.append("")
+            lines.append(task.description)
         return "\n".join(lines)
 
     def _format_timestamp(self, ts: str | None) -> str:
