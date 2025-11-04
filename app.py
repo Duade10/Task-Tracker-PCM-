@@ -151,6 +151,28 @@ class SlackTaskTracker:
             except SlackApiError as exc:
                 print(f"Failed to open create task modal: {exc}")
 
+        @self.app.shortcut("create_task")
+        def handle_message_shortcut(ack, body, client):
+            ack()
+            trigger_id = body.get("trigger_id")
+            if not trigger_id:
+                return
+
+            message = body.get("message", {})
+            initial_description = None
+            if isinstance(message, dict):
+                text = message.get("text")
+                if isinstance(text, str):
+                    initial_description = text.strip()
+
+            try:
+                client.views_open(
+                    trigger_id=trigger_id,
+                    view=self._build_create_task_modal(description=initial_description),
+                )
+            except SlackApiError as exc:
+                print(f"Failed to open create task modal: {exc}")
+
         @self.app.view("create_task_modal")
         def handle_modal_submission(ack, body, client, view):
             ack()
@@ -281,7 +303,49 @@ class SlackTaskTracker:
 
         return developer_id, project_manager_id, description
 
-    def _build_create_task_modal(self) -> dict:
+    def _build_create_task_modal(
+        self,
+        developer_id: str | None = None,
+        project_manager_id: str | None = None,
+        title: str | None = None,
+        description: str | None = None,
+    ) -> dict:
+        developer_element: dict[str, object] = {
+            "type": "users_select",
+            "action_id": "developer_select",
+            "placeholder": {"type": "plain_text", "text": "Select a developer"},
+        }
+        if developer_id:
+            developer_element["initial_user"] = developer_id
+
+        pm_element: dict[str, object] = {
+            "type": "users_select",
+            "action_id": "pm_select",
+            "placeholder": {"type": "plain_text", "text": "Select a project manager"},
+        }
+        if project_manager_id:
+            pm_element["initial_user"] = project_manager_id
+
+        title_element: dict[str, object] = {
+            "type": "plain_text_input",
+            "action_id": "title_input",
+            "placeholder": {"type": "plain_text", "text": "Enter a short title"},
+        }
+        if title:
+            title_element["initial_value"] = title
+
+        description_element: dict[str, object] = {
+            "type": "plain_text_input",
+            "multiline": True,
+            "action_id": "description_input",
+            "placeholder": {
+                "type": "plain_text",
+                "text": "Provide additional details (optional)",
+            },
+        }
+        if description:
+            description_element["initial_value"] = description
+
         return {
             "type": "modal",
             "callback_id": "create_task_modal",
@@ -293,46 +357,26 @@ class SlackTaskTracker:
                     "type": "input",
                     "block_id": "developer_block",
                     "label": {"type": "plain_text", "text": "Developer"},
-                    "element": {
-                        "type": "users_select",
-                        "action_id": "developer_select",
-                        "placeholder": {"type": "plain_text", "text": "Select a developer"},
-                    },
+                    "element": developer_element,
                 },
                 {
                     "type": "input",
                     "block_id": "pm_block",
                     "label": {"type": "plain_text", "text": "Project manager"},
-                    "element": {
-                        "type": "users_select",
-                        "action_id": "pm_select",
-                        "placeholder": {"type": "plain_text", "text": "Select a project manager"},
-                    },
+                    "element": pm_element,
                 },
                 {
                     "type": "input",
                     "block_id": "title_block",
                     "label": {"type": "plain_text", "text": "Task title"},
-                    "element": {
-                        "type": "plain_text_input",
-                        "action_id": "title_input",
-                        "placeholder": {"type": "plain_text", "text": "Enter a short title"},
-                    },
+                    "element": title_element,
                 },
                 {
                     "type": "input",
                     "block_id": "description_block",
                     "optional": True,
                     "label": {"type": "plain_text", "text": "Description"},
-                    "element": {
-                        "type": "plain_text_input",
-                        "multiline": True,
-                        "action_id": "description_input",
-                        "placeholder": {
-                            "type": "plain_text",
-                            "text": "Provide additional details (optional)",
-                        },
-                    },
+                    "element": description_element,
                 },
             ],
         }
