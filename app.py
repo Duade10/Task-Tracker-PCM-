@@ -69,7 +69,8 @@ class SlackTaskTracker:
             response = self._post_task_message(client, task)
             if response:
                 self.repo.update_message_reference(task.id, response["channel"], response["ts"])
-                say(text=f"Task #{task.id} created in <#{self.tasks_channel}>.", channel=channel)
+                if channel != response.get("channel"):
+                    self._post_task_summary_message(client, task, channel)
 
         @self.app.command("/tasks")
         def handle_tasks_command(ack, respond, command):
@@ -278,15 +279,24 @@ class SlackTaskTracker:
 
             message = body.get("message", {})
             initial_description = None
+            origin_channel_id = None
             if isinstance(message, dict):
                 text = message.get("text")
                 if isinstance(text, str):
                     initial_description = text.strip()
+            channel_info = body.get("channel")
+            if isinstance(channel_info, dict):
+                channel_id = channel_info.get("id")
+                if isinstance(channel_id, str):
+                    origin_channel_id = channel_id
 
             try:
                 client.views_open(
                     trigger_id=trigger_id,
-                    view=self._build_create_task_modal(description=initial_description),
+                    view=self._build_create_task_modal(
+                        description=initial_description,
+                        metadata={"origin_channel": origin_channel_id} if origin_channel_id else None,
+                    ),
                 )
             except SlackApiError as exc:
                 print(f"Failed to open create task modal: {exc}")
@@ -312,6 +322,17 @@ class SlackTaskTracker:
                 state_values, "description_block", "description_input"
             ) or ""
 
+            metadata_raw = view.get("private_metadata")
+            origin_channel_id: str | None = None
+            if metadata_raw:
+                try:
+                    metadata = json.loads(metadata_raw)
+                    channel_value = metadata.get("origin_channel")
+                    if isinstance(channel_value, str):
+                        origin_channel_id = channel_value
+                except json.JSONDecodeError:
+                    origin_channel_id = None
+
             task = self.repo.create_task(
                 title.strip(),
                 description.strip(),
@@ -322,6 +343,8 @@ class SlackTaskTracker:
             response = self._post_task_message(client, task)
             if response:
                 self.repo.update_message_reference(task.id, response["channel"], response["ts"])
+            if origin_channel_id and origin_channel_id != self.tasks_channel:
+                self._post_task_summary_message(client, task, origin_channel_id)
             self._notify_task_creator(client, body.get("user", {}).get("id"), task)
 
         @self.app.action(CHECKBOX_ACTION_PATTERN)
@@ -541,6 +564,7 @@ class SlackTaskTracker:
         project_manager_id: str | None = None,
         title: str | None = None,
         description: str | None = None,
+        metadata: dict[str, object] | None = None,
     ) -> dict:
         developer_element: dict[str, object] = {
             "type": "users_select",
@@ -578,7 +602,7 @@ class SlackTaskTracker:
         if description:
             description_element["initial_value"] = description
 
-        return {
+        modal: dict[str, object] = {
             "type": "modal",
             "callback_id": "create_task_modal",
             "title": {"type": "plain_text", "text": "Create Task"},
@@ -612,6 +636,12 @@ class SlackTaskTracker:
                 },
             ],
         }
+        if metadata is not None:
+            try:
+                modal["private_metadata"] = json.dumps(metadata)
+            except (TypeError, ValueError):
+                pass
+        return modal
 
     def _selected_user_from_state(self, values: dict, block_id: str, action_id: str) -> str | None:
         block = values.get(block_id, {})
@@ -950,6 +980,30 @@ class SlackTaskTracker:
         except SlackApiError as exc:
             print(f"Failed to post task message: {exc}")
             return None
+
+    def _post_task_summary_message(
+        self, client: WebClient, task: Task, channel: str
+    ) -> None:
+        try:
+            summary_blocks = list(self._task_summary_blocks(task))
+            summary_blocks.append(
+                {
+                    "type": "context",
+                    "elements": [
+                        {
+                            "type": "mrkdwn",
+                            "text": f"The interactive task card is available in <#{self.tasks_channel}>.",
+                        }
+                    ],
+                }
+            )
+            client.chat_postMessage(
+                channel=channel,
+                text=f"Task #{task.id}",
+                blocks=summary_blocks,
+            )
+        except SlackApiError as exc:
+            print(f"Failed to share task message in channel {channel}: {exc}")
 
     def _update_task_message(self, client: WebClient, task: Task) -> None:
         if not task.message_ts:
