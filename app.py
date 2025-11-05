@@ -385,6 +385,25 @@ class SlackTaskTracker:
             updated_task = self.repo.update_checkmarks(task_id, developer_checked, project_manager_checked)
             self._update_task_message(client, updated_task)
 
+            container = body.get("container", {})
+            if isinstance(container, dict) and container.get("type") == "message":
+                container_channel = container.get("channel_id")
+                container_ts = container.get("message_ts")
+                if (
+                    isinstance(container_channel, str)
+                    and isinstance(container_ts, str)
+                    and not container.get("is_ephemeral", False)
+                ):
+                    try:
+                        client.chat_update(
+                            channel=container_channel,
+                            ts=container_ts,
+                            text=f"Task #{task_id}",
+                            blocks=self._build_task_blocks(updated_task),
+                        )
+                    except SlackApiError:
+                        pass
+
             if developer_checked and not previous_developer_checked:
                 self._send_channel_notification(
                     client,
@@ -985,14 +1004,14 @@ class SlackTaskTracker:
         self, client: WebClient, task: Task, channel: str
     ) -> None:
         try:
-            summary_blocks = list(self._task_summary_blocks(task))
+            summary_blocks = list(self._build_task_blocks(task))
             summary_blocks.append(
                 {
                     "type": "context",
                     "elements": [
                         {
                             "type": "mrkdwn",
-                            "text": f"The interactive task card is available in <#{self.tasks_channel}>.",
+                            "text": f"Updates here stay in sync with the main card in <#{self.tasks_channel}>.",
                         }
                     ],
                 }
