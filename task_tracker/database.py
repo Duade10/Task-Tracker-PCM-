@@ -154,22 +154,72 @@ class TaskRepository:
             )
         return self.get_task(task_id)
 
-    def list_tasks(self, status: Optional[str] = None) -> list[Task]:
+    def list_tasks(
+        self,
+        status: Optional[str] = None,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> list[Task]:
+        conditions, params = self._build_filters(status, start, end)
         query = "SELECT * FROM tasks"
-        if status == "completed":
-            query += " WHERE developer_checked = 1 AND project_manager_checked = 1"
-        elif status == "pending":
-            query += " WHERE NOT (developer_checked = 1 AND project_manager_checked = 1)"
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
         query += " ORDER BY created_at DESC"
+        limit_params: list[object] = []
+        if limit is not None:
+            query += " LIMIT ?"
+            limit_params.append(limit)
+            if offset is not None:
+                query += " OFFSET ?"
+                limit_params.append(offset)
+        elif offset is not None:
+            query += " LIMIT -1 OFFSET ?"
+            limit_params.append(offset)
         with self._connect() as conn:
-            rows = conn.execute(query).fetchall()
+            rows = conn.execute(query, (*params, *limit_params)).fetchall()
         return [self._row_to_task(row) for row in rows]
+
+    def count_tasks(
+        self,
+        status: Optional[str] = None,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+    ) -> int:
+        conditions, params = self._build_filters(status, start, end)
+        query = "SELECT COUNT(*) FROM tasks"
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        with self._connect() as conn:
+            row = conn.execute(query, params).fetchone()
+        return int(row[0]) if row else 0
 
     def delete_task(self, task_id: int) -> None:
         with self._connect() as conn:
             cursor = conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
             if cursor.rowcount == 0:
                 raise KeyError(f"Task {task_id} not found")
+
+    def _build_filters(
+        self,
+        status: Optional[str],
+        start: Optional[str],
+        end: Optional[str],
+    ) -> tuple[list[str], list[object]]:
+        conditions: list[str] = []
+        params: list[object] = []
+        if status == "completed":
+            conditions.append("developer_checked = 1 AND project_manager_checked = 1")
+        elif status == "pending":
+            conditions.append("NOT (developer_checked = 1 AND project_manager_checked = 1)")
+        if start:
+            conditions.append("created_at >= ?")
+            params.append(start)
+        if end:
+            conditions.append("created_at < ?")
+            params.append(end)
+        return conditions, params
 
     def _row_to_task(self, row: sqlite3.Row) -> Task:
         return Task(
