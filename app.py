@@ -256,6 +256,19 @@ class SlackTaskTracker:
             except SlackApiError as exc:
                 print(f"Failed to open create task modal: {exc}")
 
+        @self.app.shortcut("list_task")
+        def handle_list_tasks_shortcut(ack, body, client):
+            ack()
+            trigger_id = body.get("trigger_id")
+            if not trigger_id:
+                return
+            try:
+                client.views_open(
+                    trigger_id=trigger_id, view=self._build_tasks_filter_modal()
+                )
+            except SlackApiError as exc:
+                print(f"Failed to open tasks filter modal: {exc}")
+
         @self.app.shortcut("create_task")
         def handle_message_shortcut(ack, body, client):
             ack()
